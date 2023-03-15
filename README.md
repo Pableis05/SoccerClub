@@ -1,2 +1,2 @@
 # SoccerClub
-A SoccerClubt to resgistrate and interact with the organization
+A Soccer club to resgistrate and interact with the organization
