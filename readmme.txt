@@ -1,0 +1,220 @@
+#1
+
+package co.icesi.taskManager.config;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import co.icesi.taskManager.utils.JwtFilter;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true)
+public class AppConfig {
+
+    @Autowired
+    private JwtFilter jwtFilter;
+
+    @Bean
+    BCryptPasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .cors(t -> t.disable())
+            .csrf(c -> c.disable())
+            .authorizeHttpRequests(requests -> requests
+                    .requestMatchers("/login").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/tasks/**").hasAnyAuthority("VIEW_TASK")
+                    .requestMatchers(HttpMethod.POST,"/tasks/**").hasAnyAuthority("CREATE_TASK")
+                    .requestMatchers(HttpMethod.PUT,"/tasks/**").hasAnyAuthority("UPDATE_TASK")
+                    .requestMatchers(HttpMethod.DELETE,"/tasks/**").hasAnyAuthority("DELETE_TASK")
+                    .anyRequest().authenticated())
+            .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+            .sessionManagement(t -> t.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+            
+        return http.build();
+    }
+}
+
+
+
+
+#2
+
+
+
+package co.icesi.taskManager.controllers.api;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import co.icesi.taskManager.dtos.TaskDto;
+import co.icesi.taskManager.mappers.TaskMapper;
+import co.icesi.taskManager.model.Task;
+import co.icesi.taskManager.services.interfaces.TaskService;
+
+@RestController
+@RequestMapping("/tasks")
+public class TaskControllerImpl implements TaskController {
+
+    @Autowired
+    private TaskService taskService;
+
+    @Autowired
+    private TaskMapper taskMapper;
+
+    @GetMapping
+    public ResponseEntity<?> findAllTask() {
+        List<TaskDto> tasksDto = taskService.getAllTask().stream()
+                .map(taskMapper::taskToTaskDto)
+                .collect(Collectors.toList());
+        ;
+        return ResponseEntity.ok().body(tasksDto);
+    }
+
+    @PostMapping()
+    public ResponseEntity<?> addTask(@RequestBody TaskDto dto) {
+        Task taskToSave = taskMapper.taskDtoToTask(dto);
+        return ResponseEntity.status(201).body(taskService.createTask(taskToSave));
+    }
+
+    @PutMapping
+    public ResponseEntity<?> updateTask(@RequestBody TaskDto dto) {
+        Task taskToUpdate = taskMapper.taskDtoToTask(dto);
+        return ResponseEntity.ok().body(taskService.updateTask(taskToUpdate));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteTask(@PathVariable long id) {
+        Task taskToDelete = taskService.getTaskById(id);
+        if (taskToDelete == null) {
+            return ResponseEntity.status(404).build();
+        }
+        taskService.deleteTask(id);
+        return ResponseEntity.status(200).build();
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<?> findById(@PathVariable long id) {
+        Task taskToGet = taskService.getTaskById(id);
+
+        if (taskToGet == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        return ResponseEntity.ok().body(taskMapper.taskToTaskDto(taskToGet));
+    }
+
+}
+
+
+#3
+
+package co.icesi.taskManager.services.impl;
+
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import co.icesi.taskManager.model.Task;
+import co.icesi.taskManager.model.User;
+import co.icesi.taskManager.repositories.TaskRepository;
+import co.icesi.taskManager.repositories.UserRepository;
+import co.icesi.taskManager.services.interfaces.TaskService;
+
+@Service
+public class TaskServiceImp implements TaskService {
+
+    @Autowired
+    private TaskRepository taskRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Override
+    public Task createTask(Task task) {
+        return taskRepository.save(task);
+    }
+
+    @Override
+    public Task updateTask(Task task) {
+        return taskRepository.save(task);
+    }
+
+    @Override
+    public void deleteTask(long taskId) {
+        taskRepository.deleteById(taskId);
+    }
+
+    @Override
+    public void assignTask(long taskId, long userId) {
+        Task taskToAssignUser = taskRepository.findById(taskId).get();
+        User user = userRepository.findById(userId).get();
+
+        user.getTasks().add(taskToAssignUser);
+        taskToAssignUser.getAssignedUsers().add(user);
+
+        taskRepository.save(taskToAssignUser);
+        userRepository.save(user);
+    }
+
+    @Override
+    public void unassignTask(long taskId, long userId) {
+        Task taskToUnAssignUser = taskRepository.findById(taskId).get();
+        User user = userRepository.findById(userId).get();
+
+        List<User> assignedUser = taskToUnAssignUser.getAssignedUsers();
+        List<Task> assignTask = user.getTasks();
+    }
+
+    @Override
+    public Task getTaskById(long taskId) {
+        Optional<Task> taskToGet = taskRepository.findById(taskId);
+        if (taskToGet.isEmpty()){
+            return null;
+        }
+        return taskRepository.findById(taskId).get();
+    }
+
+    @Override
+    public List<Task> getAllTask() {
+        return taskRepository.findAll();
+    }
+
+}
+
+
